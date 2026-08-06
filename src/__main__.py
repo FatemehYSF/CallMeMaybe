@@ -21,3 +21,9 @@ print(f"Loaded {len(prompts)} promts.")
 
 for prompt in prompts:
     print(f"user: {prompt['prompt']}")
+
+    input_ids = model.encode(prompt["prompt"])
+    input_ids_list = input_ids[0].tolist()
+    logits = model.get_logits_from_input_ids(input_ids_list)
+    print(f"Number of logits: {len(logits)}")
+    print(logits[:10])

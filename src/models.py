@@ -14,4 +14,3 @@ class FunctionDefinition:
     description: str
     parameters: List[Parameter]
     return_type: str
-
