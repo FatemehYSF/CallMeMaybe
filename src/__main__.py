@@ -25,5 +25,6 @@ for prompt in prompts:
     input_ids = model.encode(prompt["prompt"])
     input_ids_list = input_ids[0].tolist()
     logits = model.get_logits_from_input_ids(input_ids_list)
-    print(f"Number of logits: {len(logits)}")
-    print(logits[:10])
+    best_token_id = logits.index(max(logits))
+    best_token = model.decode([best_token_id])
+    print(f"Best token: '{best_token}'")
