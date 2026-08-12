@@ -5,6 +5,7 @@ description = "Call Me Maybe project"
 requires-python = ">=3.10"
 dependencies = [
     "llm-sdk",
+    "pydantic>=2.13.4",
 ]
 
 [tool.uv.sources]

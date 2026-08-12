@@ -1,5 +1,20 @@
-import torch
+import math
+
 from llm_sdk import Small_LLM_Model
+
+
+def log_softmax_value(
+    logits: list[float],
+    token_id: int,
+) -> float:
+    max_logit = max(logits)
+
+    total = sum(
+        math.exp(logit - max_logit)
+        for logit in logits
+    )
+
+    return logits[token_id] - max_logit - math.log(total)
 
 
 def score_function(
@@ -13,12 +28,14 @@ def score_function(
     for token_id in function_tokens[1:]:
         current_input = input_ids + generated_tokens
 
-        logits = model.get_logits_from_input_ids(current_input)
+        logits = model.get_logits_from_input_ids(
+            current_input
+        )
 
-        logits_tensor = torch.tensor(logits)
-        log_probs = torch.log_softmax(logits_tensor, dim=0)
-
-        score += float(log_probs[token_id])
+        score += log_softmax_value(
+            logits,
+            token_id,
+        )
 
         generated_tokens.append(token_id)
 

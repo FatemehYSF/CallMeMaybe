@@ -1,16 +1,13 @@
-from dataclasses import dataclass
-from typing import List
+from pydantic import BaseModel
 
 
-@dataclass
-class Parameter:
+class Parameter(BaseModel):
     name: str
     type: str
 
 
-@dataclass
-class FunctionDefinition:
+class FunctionDefinition(BaseModel):
     name: str
     description: str
-    parameters: List[Parameter]
+    parameters: list[Parameter]
     return_type: str
