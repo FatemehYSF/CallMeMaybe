@@ -5,16 +5,20 @@ def build_prompt(
     function_models: list[FunctionDefinition],
     user_prompt: str,
 ) -> str:
-    prompt_text = "Available functions:\n\n"
+    """Build the message sent to the LLM."""
+    prompt_text = "<|im_start|>system\n"
+    prompt_text += "Choose exactly one function name from the provided list.\n"
+    prompt_text += "<|im_end|>\n<|im_start|>user\nAvailable functions:\n\n"
 
     for function in function_models:
-        prompt_text += f"Function: {function.name}\n"
-        prompt_text += f"Description: {function.description}\n\n"
+        prompt_text += f"{function.name}\n"
+        prompt_text += (
+            f"Description: {function.description}\n\n"
+        )
 
-    prompt_text += "User:\n"
-    prompt_text += f"{user_prompt}\n\n"
-    prompt_text += "Choose the function that best matches the user's request.\n"
-    prompt_text += "Respond with only the function name.\n"
-    prompt_text += "Answer:\n"
+    prompt_text += "Request:\n"
+    prompt_text += f"{user_prompt}\n"
+    prompt_text += "Reply with only the matching function name.\n"
+    prompt_text += "<|im_end|>\n<|im_start|>assistant\n"
 
     return prompt_text

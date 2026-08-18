@@ -1,117 +1,180 @@
+import argparse
+import json
 from pathlib import Path
+from typing import Any
 
 from llm_sdk import Small_LLM_Model
+from pydantic import ValidationError
 
-from src.parser import parse_json, build_function_models
-from src.prompt_builder import build_prompt
-from src.function_selector import select_function
 from src.argument_ectractor import extract_arguments
-from src.vocabulary import load_vocabulary, build_token_to_id
-from src.constrained_decoder import (
-    generate_constrained_prefix,
-    escape_json_string,
-)
+from src.constrained_decoder import generate_constrained_output
+from src.function_selector import select_function
+from src.parser import build_function_models, parse_json
+from src.prompt_builder import build_prompt
+from src.validator import validate_function_call
 
 
-print("Call Me Maybe started!")
+def parse_arguments() -> argparse.Namespace:
+    """Get file paths from the command line."""
+    parser = argparse.ArgumentParser()
 
-model = Small_LLM_Model()
-print("Model loaded successfully!")
-
-vocab_path = Path(model.get_path_to_vocab_file())
-vocabulary = load_vocabulary(vocab_path)
-token_to_id = build_token_to_id(vocabulary)
-
-print(f"Vocabulary size: {len(vocabulary)}")
-
-for text in ['{', '"prompt"', '"name"', '"parameters"', ':', ',']:
-    tokens = model.encode(text)
-    print(text, tokens[0].tolist())
-
-functions = parse_json(
-    Path("data/input/functions_definition.json")
-)
-
-prompts = parse_json(
-    Path("data/input/function_calling_tests.json")
-)
-
-function_models = build_function_models(functions)
-
-print(f"Loaded {len(functions)} functions.")
-print(f"Loaded {len(prompts)} prompts.")
-
-function_tokens: dict[str, list[int]] = {}
-
-for function in function_models:
-    tokens = model.encode(function.name)[0].tolist()
-    function_tokens[function.name] = tokens
-
-for prompt in prompts:
-    user_prompt = prompt["prompt"]
-
-    print(f"user: {user_prompt}")
-
-    full_prompt = build_prompt(
-        function_models,
-        user_prompt,
+    parser.add_argument(
+        "--functions_definition",
+        default=(
+            "data/input/functions_definition.json"
+        ),
     )
 
-    input_ids = model.encode(full_prompt)
-    input_ids_list = input_ids[0].tolist()
-
-    selected_function = select_function(
-        model,
-        input_ids_list,
-        function_tokens,
+    parser.add_argument(
+        "--input",
+        default=(
+            "data/input/function_calling_tests.json"
+        ),
     )
 
-    print(f"Selected function: {selected_function}")
-
-    escaped_prompt = escape_json_string(
-        user_prompt
-    )
-    function = next(
-        function
-        for function in function_models
-        if function.name == selected_function
+    parser.add_argument(
+        "--output",
+        default=(
+            "data/output/"
+            "function_calling_results.json"
+        ),
     )
 
-    arguments = extract_arguments(
-        user_prompt,
-        function,
+    return parser.parse_args()
+
+
+def load_input_file(
+    path: Path,
+) -> list[dict[str, Any]]:
+    """Open and read a JSON input file."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"File not found: {path}"
+        )
+
+    try:
+        return parse_json(path)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Invalid JSON in file: {path}"
+        ) from error
+
+
+def main() -> None:
+    """Read prompts and create function calls."""
+    args = parse_arguments()
+
+    print("Call Me Maybe started!")
+
+    model = Small_LLM_Model()
+
+    functions = load_input_file(
+        Path(args.functions_definition)
     )
-    parameter_parts = []
 
-    for parameter, value in zip(
-        function.parameters,
-        arguments,
-    ):
-        if parameter.type == "string":
-            escaped_value = escape_json_string(str(value))
-            parameter_parts.append(
-                f'"{parameter.name}":"{escaped_value}"'
-            )
-        else:
-            parameter_parts.append(
-                f'"{parameter.name}":{value}'
-            )
-
-    parameters_json = ",".join(parameter_parts)
-    target = (
-        f'{{"prompt":"{escaped_prompt}",'
-        f'"name":"{selected_function}",'
-        f'"parameters":{{{parameters_json}}}}}'
+    prompts = load_input_file(
+        Path(args.input)
     )
 
-    generated_tokens = generate_constrained_prefix(
-        model,
-        input_ids_list,
-        target,
+    function_models = build_function_models(
+        functions
     )
 
-    generated_text = model.decode(generated_tokens)
+    results: list[dict[str, Any]] = []
 
-    print("Constrained output:", generated_text)
+    for prompt_data in prompts:
+        user_prompt = prompt_data["prompt"]
 
-    print(f"Arguments: {arguments}")
+        full_prompt = build_prompt(
+            function_models,
+            user_prompt,
+        )
+
+        input_ids = model.encode(
+            full_prompt
+        )[0].tolist()
+
+        selected_function = select_function(
+            model,
+            input_ids,
+            function_models,
+        )
+
+        function = next(
+            function
+            for function in function_models
+            if function.name == selected_function
+        )
+
+        print(
+            f"Selected function: {selected_function}"
+        )
+
+        arguments = extract_arguments(
+            user_prompt,
+            function,
+        )
+
+        generated_tokens = generate_constrained_output(
+            model,
+            input_ids,
+            user_prompt,
+            function,
+            arguments,
+        )
+
+        generated_text = model.decode(
+            generated_tokens
+        )
+        result = json.loads(generated_text)
+
+        validate_function_call(
+            result,
+            function,
+        )
+
+        results.append(result)
+
+        print(
+            f"user: {user_prompt}"
+        )
+        print(
+            f"Selected function: {selected_function}"
+        )
+        print(
+            f"Constrained output: {generated_text}"
+        )
+        print(
+            f"Arguments: {arguments}"
+        )
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            results,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (
+        FileNotFoundError,
+        KeyError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        ValidationError,
+    ) as error:
+        print(f"Error: {error}")

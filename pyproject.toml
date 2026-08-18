@@ -5,8 +5,22 @@ description = "Call Me Maybe project"
 requires-python = ">=3.10"
 dependencies = [
     "llm-sdk",
+    "numpy>=2.0",
     "pydantic>=2.13.4",
+]
+
+[dependency-groups]
+dev = [
+    "flake8>=7.0",
+    "mypy>=1.0",
 ]
 
 [tool.uv.sources]
 llm-sdk = { path = "llm_sdk" }
+
+[tool.mypy]
+exclude = "^llm_sdk/"
+
+[[tool.mypy.overrides]]
+module = "llm_sdk.*"
+follow_imports = "skip"
