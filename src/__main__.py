@@ -6,7 +6,7 @@ from typing import Any
 from llm_sdk import Small_LLM_Model
 from pydantic import ValidationError
 
-from src.argument_ectractor import extract_arguments
+from src.argument_exctractor import extract_arguments
 from src.constrained_decoder import generate_constrained_output
 from src.function_selector import select_function
 from src.parser import build_function_models, parse_json
