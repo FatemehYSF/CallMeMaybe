@@ -77,7 +77,16 @@ def _take_string(
             if source in strings:
                 strings.remove(source)
             return source
-
+    if "replacement" in parameter_name.lower():
+        match = re.search(
+            r"\bwith\s+['\"]([^'\"]+)['\"]",
+            user_prompt,
+        )
+        if match is not None:
+            replacement = match.group(1)
+            if replacement in strings:
+                strings.remove(replacement)
+            return replacement
     if strings:
         return strings.pop(0)
 

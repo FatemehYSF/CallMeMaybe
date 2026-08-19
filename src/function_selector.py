@@ -35,4 +35,12 @@ def select_function(
         scores[function.name] = log_probability
         print(f"{function.name} → {scores[function.name]}")
 
-    return max(scores, key=lambda name: scores[name])
+    if not scores:
+        raise ValueError("No functions are available.")
+
+    best_function = max(
+        scores,
+        key=lambda name: scores[name],
+    )
+
+    return best_function

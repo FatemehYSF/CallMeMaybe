@@ -8,6 +8,7 @@ def validate_function_call(
     function: FunctionDefinition,
 ) -> None:
     """Check that a function call has the right shape."""
+    # Check the top-level keys
     if set(result) != {
         "prompt",
         "name",
