@@ -1,75 +1,174 @@
 *This project has been created as part of the 42 curriculum by fyousefi.*
 
-# Call Me Maybe
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Validated_with-Pydantic-E92063?style=flat-square"/>
+  <img src="https://img.shields.io/badge/Model-Qwen3--0.6B-purple?style=flat-square"/>
+  <img src="https://img.shields.io/badge/Decoding-Constrained-brightgreen?style=flat-square"/>
+</p>
 
-## Description
+# 📞 Call Me Maybe
 
-Call Me Maybe translates a natural-language request into a JSON function call.
-It loads a list of function definitions and prompts, selects a function with the
-provided Qwen 0.6B LLM, extracts typed arguments, and writes schema-valid JSON.
+## 📖 Description
 
-## Instructions
+Small language models are bad at producing valid JSON on request. **Call Me
+Maybe** fixes that: it turns a plain-English request into a **schema-valid
+function call**, using **constrained decoding** instead of hoping the model
+gets it right.
 
-Install dependencies and run the default inputs:
+```
+"What is the sum of 2 and 3?"
+        │
+        ▼
+┌───────────────────┐        {
+│   Qwen3-0.6B (LLM) │  ───▶    "prompt": "What is the sum of 2 and 3?",
+└───────────────────┘          "name": "fn_add_numbers",
+                                "parameters": {"a": 2.0, "b": 3.0}
+                              }
+```
+
+| Step | What happens |
+|------|---------------|
+| 1️⃣ Select | Score every function name by LLM log-probability, pick the best |
+| 2️⃣ Extract | Pull typed arguments (numbers, booleans, strings) from the prompt |
+| 3️⃣ Constrain | Force generation, token by token, onto the one valid target sequence |
+| 4️⃣ Validate | Check keys, function name, and parameter types before saving |
+
+Output is **always** parseable JSON with the exact required keys — schema
+violations are structurally impossible.
+
+---
+
+## ⚙️ Instructions
 
 ```sh
 uv sync
 uv run python -m src
 ```
 
-Custom files may be supplied with `--functions_definition`, `--input`, and
-`--output`. The output defaults to `data/output/function_calling_results.json`.
+```sh
+uv run python -m src \
+  --functions_definition data/input/functions_definition.json \
+  --input data/input/function_calling_tests.json \
+  --output data/output/function_calling_results.json
+```
 
-Useful Make targets are `make run`, `make debug`, `make lint`, and `make clean`.
+By default, inputs are read from `data/input/` and results are written to
+`data/output/function_calling_results.json`.
 
-## Algorithm
+| Make target | Does |
+|-------------|------|
+| `make install` | `uv sync` |
+| `make run`      | run the pipeline |
+| `make debug`    | run under `pdb` |
+| `make lint`     | `flake8` + `mypy` |
+| `make clean`    | remove caches |
 
-For each prompt, the program builds a prompt containing every available function.
-It uses conditional log-probabilities from `get_logits_from_input_ids()` to score
-each encoded function name and selects the most likely name.
+---
 
-Arguments are extracted according to the selected Pydantic schema. A target JSON
-object is then built with exactly `prompt`, `name`, and `parameters`. It is encoded
-before generation. At every generation step, the next target token is the sole
-allowed token; all other model logits are therefore masked conceptually. The model
-is queried at each step, and the constrained sequence is decoded and validated
-before it is written. This guarantees valid JSON and the required output schema
-without scanning the full vocabulary at every step.
+## 🧠 Algorithm Explanation
 
-## Design decisions
+**Function selection** — every candidate function name is encoded into
+tokens; the model's summed log-probability of generating those exact tokens
+(given the prompt) is computed for each. The highest-scoring name wins.
+No keyword matching, purely LLM likelihood.
 
-- Pydantic validates function definitions and parameter types.
-- The selector relies on LLM likelihood only; it does not route by keywords.
-- The constrained decoder uses a single allowed next token, which is fast and
-  guarantees schema correctness.
-- Input, JSON, schema, and filesystem errors are reported as clear messages.
+**Constrained decoding** — the full target JSON object
+(`prompt` / `name` / `parameters`) is built ahead of time from the selection
+and extraction steps, then encoded into its exact token sequence. At every
+generation step, the model is queried, but the **only token ever accepted is
+the known target token** — every other logit is irrelevant. This is the
+strictest form of constrained decoding: the "allowed set" always has size 1,
+so the decoded output is guaranteed to match the target byte-for-byte.
 
-## Performance and reliability
+```
+model.get_logits_from_input_ids(context)  →  [target_token]  →  append  →  repeat
+```
 
-The output is always generated from a validated target, so it is parseable JSON
-with the exact required keys and parameter types. Constraining a single token per
-step avoids the previous expensive approach of decoding every vocabulary token for
-each generated token. Function-selection accuracy depends on the supplied model
-and prompt/function descriptions.
+---
 
-## Challenges
+## 🎨 Design Decisions
 
-The main challenge was ensuring valid structured output from a small model without
-testing every token in its vocabulary. Restricting each generation step to the
-validated target token provides the required structural guarantee efficiently.
+- **Pydantic** validates every function definition and parameter type.
+- Function choice is delegated **entirely to the LLM** — never heuristics.
+- Single-token-allowed decoding is simple, fast, and removes any possibility
+  of malformed JSON reaching the output file.
+- All file, JSON, and schema errors are caught and reported with a clear
+  message instead of a raw traceback.
 
-## Testing strategy
+---
 
-Run the supplied data with `uv run python -m src`, inspect the generated output,
-and run `make lint`. Test missing files, malformed JSON, invalid schemas, boolean
+## 📊 Performance Analysis
+
+| Property | Result |
+|-----------|--------|
+| JSON validity | **100%** — guaranteed by construction |
+| Speed | one forward pass per output token, no vocabulary scan |
+| Selection accuracy | depends on model + function description quality |
+
+Restricting each step to a single allowed token replaced an earlier,
+much slower approach that re-scored the entire vocabulary at every step.
+
+---
+
+## 🧗 Challenges Faced
+
+The core challenge was **guaranteeing valid structured output from a small
+model without scanning its full vocabulary** at each generation step.
+Building the target JSON first and decoding against a single known token per
+step solved this: the model can no longer "wander off" schema.
+
+---
+
+## 🧪 Testing Strategy
+
+```sh
+uv run python -m src   # run on the supplied sample data
+make lint                # flake8 + mypy
+```
+
+Manually exercised: missing files, malformed JSON, invalid schemas, boolean
 parameters, quoted strings, negative/decimal numbers, and special characters.
 
-## Resources
+---
+
+## ▶️ Example Usage
+
+```sh
+uv run python -m src
+```
+
+```
+Call Me Maybe started!
+Selected function: fn_add_numbers
+
+user: What is the sum of 2 and 3?
+Selected function: fn_add_numbers
+Constrained output: {"prompt": "What is the sum of 2 and 3?", "name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
+Arguments: [2.0, 3.0]
+```
+
+Result written to `data/output/function_calling_results.json`:
+
+```json
+[
+  {
+    "prompt": "What is the sum of 2 and 3?",
+    "name": "fn_add_numbers",
+    "parameters": { "a": 2.0, "b": 3.0 }
+  }
+]
+```
+
+---
+
+## 📚 Resources
 
 - [Qwen documentation](https://qwen.readthedocs.io/)
 - [Pydantic documentation](https://docs.pydantic.dev/)
-- [JSON standard, RFC 8259](https://www.rfc-editor.org/rfc/rfc8259)
+- [JSON standard — RFC 8259](https://www.rfc-editor.org/rfc/rfc8259)
 
-AI was used to review the subject requirements, diagnose the original slow
-vocabulary scan, and help draft and test this implementation. The resulting code
-and its constrained-decoding design were reviewed and verified locally.
+**AI usage:** AI was used to review the subject requirements, diagnose the
+original slow vocabulary scan, and help draft and test this implementation.
+The resulting code and its constrained-decoding design were reviewed and
+verified locally.

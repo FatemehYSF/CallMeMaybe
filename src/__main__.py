@@ -135,18 +135,12 @@ def main() -> None:
 
         results.append(result)
 
-        print(
-            f"user: {user_prompt}"
-        )
-        print(
-            f"Selected function: {selected_function}"
-        )
-        print(
-            f"Constrained output: {generated_text}"
-        )
-        print(
-            f"Arguments: {arguments}"
-        )
+        print()
+        print(f"user: {user_prompt}")
+        print(f"Selected function: {selected_function}")
+        print(f"Constrained output: {generated_text}")
+        print(f"Arguments: {arguments}")
+        print()
 
     output_path = Path(args.output)
     output_path.parent.mkdir(

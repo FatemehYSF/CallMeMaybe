@@ -67,26 +67,40 @@ def _take_string(
     strings: list[str],
 ) -> str:
     """Return one text value from the prompt."""
-    if parameter_name.lower() in {"regex", "pattern"}:
+    parameter = parameter_name.lower()
+
+    if parameter in {"regex", "pattern"}:
         return _regex_value(user_prompt)
 
-    if "source" in parameter_name.lower():
-        match = re.search(r"\bin\s+['\"]([^'\"]+)['\"]", user_prompt)
-        if match is not None:
-            source = match.group(1)
-            if source in strings:
-                strings.remove(source)
-            return source
-    if "replacement" in parameter_name.lower():
+    if "source" in parameter:
         match = re.search(
-            r"\bwith\s+['\"]([^'\"]+)['\"]",
+            r"\bin\s+(['\"])(.*?)\1",
             user_prompt,
         )
         if match is not None:
-            replacement = match.group(1)
+            source = match.group(2)
+            if source in strings:
+                strings.remove(source)
+            return source
+
+    if "replacement" in parameter:
+        match = re.search(
+            r"\bwith\s+(['\"])(.*?)\1",
+            user_prompt,
+        )
+        if match is not None:
+            replacement = match.group(2)
             if replacement in strings:
                 strings.remove(replacement)
             return replacement
+
+        match = re.search(
+            r"\bwith\s+([A-Za-z0-9_-]+)",
+            user_prompt,
+        )
+        if match is not None:
+            return match.group(1)
+
     if strings:
         return strings.pop(0)
 
