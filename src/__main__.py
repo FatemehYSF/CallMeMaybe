@@ -1,16 +1,18 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from llm_sdk import Small_LLM_Model
 from pydantic import ValidationError
 
-from src.argument_exctractor import extract_arguments
-from src.constrained_decoder import generate_constrained_output
+from src.constrained_decoder import (
+    TokenVocabulary,
+    generate_constrained_output,
+)
 from src.function_selector import select_function
 from src.parser import build_function_models, parse_json
-from src.prompt_builder import build_prompt
+from src.prompt_builder import build_arguments_prompt, build_prompt
 from src.validator import validate_function_call
 
 
@@ -81,65 +83,71 @@ def main() -> None:
     )
 
     results: list[dict[str, Any]] = []
+    vocabulary: Optional[TokenVocabulary] = None
 
     for prompt_data in prompts:
-        user_prompt = prompt_data["prompt"]
+        user_prompt = prompt_data.get("prompt")
+        if not isinstance(user_prompt, str):
+            print(f"Error: skipping entry without a prompt: {prompt_data}")
+            continue
 
-        full_prompt = build_prompt(
-            function_models,
-            user_prompt,
-        )
+        try:
+            full_prompt = build_prompt(
+                function_models,
+                user_prompt,
+            )
 
-        input_ids = model.encode(
-            full_prompt
-        )[0].tolist()
+            input_ids = model.encode(
+                full_prompt
+            )[0].tolist()
 
-        selected_function = select_function(
-            model,
-            input_ids,
-            function_models,
-        )
+            if vocabulary is None:
+                vocabulary = TokenVocabulary(
+                    model,
+                    len(model.get_logits_from_input_ids(input_ids)),
+                )
 
-        function = next(
-            function
-            for function in function_models
-            if function.name == selected_function
-        )
+            selected_function = select_function(
+                model,
+                input_ids,
+                function_models,
+            )
 
-        print(
-            f"Selected function: {selected_function}"
-        )
+            function = next(
+                function
+                for function in function_models
+                if function.name == selected_function
+            )
 
-        arguments = extract_arguments(
-            user_prompt,
-            function,
-        )
+            arguments_ids = model.encode(
+                build_arguments_prompt(function, user_prompt)
+            )[0].tolist()
 
-        generated_tokens = generate_constrained_output(
-            model,
-            input_ids,
-            user_prompt,
-            function,
-            arguments,
-        )
+            result = generate_constrained_output(
+                model,
+                vocabulary,
+                arguments_ids,
+                user_prompt,
+                function,
+            )
 
-        generated_text = model.decode(
-            generated_tokens
-        )
-        result = json.loads(generated_text)
-
-        validate_function_call(
-            result,
-            function,
-        )
+            validate_function_call(
+                result,
+                function,
+            )
+        except (ValueError, ValidationError) as error:
+            print(f"Error for prompt '{user_prompt}': {error}")
+            continue
 
         results.append(result)
 
         print()
         print(f"user: {user_prompt}")
         print(f"Selected function: {selected_function}")
-        print(f"Constrained output: {generated_text}")
-        print(f"Arguments: {arguments}")
+        print(
+            "Constrained output: "
+            f"{json.dumps(result, ensure_ascii=False)}"
+        )
         print()
 
     output_path = Path(args.output)

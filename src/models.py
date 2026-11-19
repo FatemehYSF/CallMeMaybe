@@ -7,7 +7,7 @@ class Parameter(BaseModel):
     """Describe one supported function parameter."""
 
     name: str
-    type: Literal["string", "number", "boolean"]
+    type: Literal["string", "number", "integer", "boolean"]
 
 
 class FunctionDefinition(BaseModel):
