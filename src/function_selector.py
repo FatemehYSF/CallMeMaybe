@@ -14,23 +14,6 @@ def _log_softmax(logits: Sequence[float], token_id: int) -> float:
     return logits[token_id] - maximum - math.log(total)
 
 
-def sequence_log_probability(
-    model: Small_LLM_Model,
-    input_ids: list[int],
-    token_ids: list[int],
-) -> float:
-    """Calculate how likely the model is to write these tokens next."""
-    current_ids = input_ids.copy()
-    log_probability = 0.0
-
-    for token_id in token_ids:
-        logits = model.get_logits_from_input_ids(current_ids)
-        log_probability += _log_softmax(logits, token_id)
-        current_ids.append(token_id)
-
-    return log_probability
-
-
 def select_function(
     model: Small_LLM_Model,
     input_ids: list[int],
@@ -41,11 +24,15 @@ def select_function(
 
     for function in functions:
         name_tokens = model.encode(function.name)[0].tolist()
-        scores[function.name] = sequence_log_probability(
-            model,
-            input_ids,
-            name_tokens,
-        )
+        current_ids = input_ids.copy()
+        log_probability = 0.0
+
+        for token_id in name_tokens:
+            logits = model.get_logits_from_input_ids(current_ids)
+            log_probability += _log_softmax(logits, token_id)
+            current_ids.append(token_id)
+
+        scores[function.name] = log_probability
         print(f"{function.name} → {scores[function.name]}")
 
     if not scores:

@@ -57,15 +57,6 @@ def validate_function_call(
                     f"Parameter '{name}' must be a number."
                 )
 
-        elif parameter_type == "integer":
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-            ):
-                raise ValueError(
-                    f"Parameter '{name}' must be an integer."
-                )
-
         elif parameter_type == "string":
             if not isinstance(value, str):
                 raise ValueError(
