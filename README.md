@@ -146,12 +146,49 @@ Each token costs one full forward pass, since the SDK has no KV cache.
 
 ## 🧗 Challenges
 
-| 😵 Problem | 💡 Solution |
-|------------|-------------|
-| Masking 151k tokens per step was slow | Group the vocabulary once at startup; each mask is a NumPy index lookup |
-| Merged tokens like `",` close a string mid-token | Any token whose first quote closes the string ends it |
-| Regex arguments need backslashes | Allow JSON escape sequences in strings |
-| Similar functions score closely | Add parameters to the selection prompt to widen the margin |
+### 🔌 Talking to the model
+
+| 😵 Problem | 💡 What I did |
+|------------|---------------|
+| The SDK has no `generate()`, only `encode`, `decode` and `get_logits_from_input_ids` | Built the pipeline step by step: encode the prompt, read the logits, turn the chosen token id back into text, and loop |
+| Free generation could invent a function name that doesn't exist | Score only the real names: run each name's tokens through the model and add up their log-probabilities |
+| Raw logits are not probabilities, and `exp()` of large logits overflows | Wrote a log-softmax that subtracts the max logit first, so it stays numerically stable |
+| `fn_substitute_string_with_regex` scored close to other string functions | Rewrote its description in `functions_definition.json` to mention source, replacement, numbers, vowels and words |
+
+### 🧩 Getting the arguments right
+
+| 😵 Problem | 💡 What I did |
+|------------|---------------|
+| **cat → dog bug:** in *"Substitute the word 'cat' with 'dog' in 'The cat sat…'"* quoted strings were taken in order, so parameters got the wrong values | Pick values by context: the text after **"in"** is the `source_string`, the text after **"with"** is the `replacement`, and each one is removed from the pool once used |
+| `"Hello 34 I'm 233 years old"`: the apostrophe in *I'm* ended the match early | Match the closing quote to the opening one with a backreference: `(['"])(.*?)\1` |
+| Some replacements are not quoted (*"with NUMBERS"*) | Fall back to the bare word after "with" |
+| The prompt says *"numbers"* or *"vowels"*, never an actual regex | Map these words to a pattern (`\d+`, `[aeiou]`) or take a quoted word |
+| Digits inside words or decimals could be picked up as numbers | Number regex with lookarounds, `(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])`, values stored as floats |
+
+### 🎛️ Trying fully masked decoding
+
+At one point I replaced the regex extractor with a decoder where the model
+wrote the values itself, with invalid tokens masked out of the logits. It
+brought its own problems:
+
+| 😵 Problem | 💡 What I did |
+|------------|---------------|
+| Checking all ~151k tokens at every step was very slow | Grouped the vocabulary once at startup (plain, escape, quote, number tokens); each mask became a NumPy index lookup |
+| Merged tokens like `",` close a string in the middle of a token | Any token whose first unescaped quote closes the string ends the value |
+| Regex values need backslashes (`\d`) | Allowed JSON escape sequences inside strings |
+| Qwen3 starts with a reasoning block instead of the answer | Added an empty `<think></think>` block to the prompt |
+| The model wrote words instead of symbols (`"asterisk"` instead of `"*"`) | Few-shot examples on unrelated functions helped, but did not fix every case |
+
+The current version goes back to regex extraction for the values. The model
+still chooses the function, and the output is forced token by token onto
+the exact JSON target, so it is always valid.
+
+### 🧹 Code quality
+
+| 😵 Problem | 💡 What I did |
+|------------|---------------|
+| Strict `mypy` rejects untyped `re` and `json` results | Typed every function and used `cast` where the library returns `Any` |
+| Bad input files crashed with a traceback | Pydantic models for definitions, plus clear errors for missing files and invalid JSON |
 
 ---
 
