@@ -21,9 +21,10 @@ Turns a natural-language prompt into a valid JSON function call using
 ## 📖 Description
 
 Small LLMs often produce invalid JSON: missing brackets, numbers in quotes,
-extra text. Here the model makes every decision (which function, which
-values), but it may only emit tokens that keep the output valid for the
-target schema.
+extra text. Here the model chooses which function to call, the arguments
+are extracted from the prompt, and the final JSON is generated token by
+token with only one allowed token at each step, so the output is always
+valid for the target schema.
 
 | 📁 File | Role |
 |---------|------|
@@ -59,7 +60,7 @@ uv run python -m src \
 ## 🧠 How It Works
 
 Each prompt goes through four steps:
-**select function → build argument prompt → constrained decoding → validate**.
+**select function → extract arguments → constrained decoding → validate**.
 
 ### 1️⃣ Select the function — `function_selector.py`
 
@@ -69,34 +70,33 @@ Every function name is scored by its log-probability after the prompt:
 score(name) = Σ log P(token_i | prompt, token_<i)
 ```
 
-The highest score wins. Only real names are scored, so the model can never
-invent a function.
+The prompt (built in `prompt_builder.py`) lists every function with its
+description. The highest score wins. Only real names are scored, so the
+model can never invent a function.
 
-### 2️⃣ Build the argument prompt — `prompt_builder.py`
+### 2️⃣ Extract the arguments — `argument_exctractor.py`
 
-Describes only the selected function and its typed parameters. Three
-few-shot examples on unrelated functions teach word-to-value mapping
-("seven" → `7.0`, "hashes" → `#`) without leaking test answers. An empty
-`<think></think>` block turns off Qwen3's reasoning text.
+Each parameter of the selected function is filled from the prompt by type:
+
+| Type | How the value is found |
+|------|------------------------|
+| `number` | Next standalone number in the prompt, as a float (`-?\d+(?:\.\d+)?`) |
+| `boolean` | The word `true` or `false` |
+| `string` | By parameter name: text after **"in"** for a source, after **"with"** for a replacement, a pattern for `regex` ("numbers" → `\d+`, "vowels" → `[aeiou]`, or a quoted word); otherwise the next quoted string, or the last word |
 
 ### 3️⃣ Constrained decoding — `constrained_decoder.py`
 
-The code writes the JSON skeleton (keys, quotes, braces, commas); the model
-only fills in the values. At each step, tokens that would break the value's
-type are masked out of the logits and the best remaining token is taken.
-
-| Type | ✅ Allowed tokens | 🛑 Stops when |
-|------|------------------|---------------|
-| `string` | Valid JSON string content, including escapes (`\\d`) | A token's first unescaped `"` closes the string |
-| `number` | Digits, `-`, `.` forming a valid number | `,` or `}` beats every continuation |
-| `integer` | Digits and `-` | Same as `number` |
-| `boolean` | `true` / `false` | Higher log-probability wins |
+The target call `{"prompt", "name", "parameters"}` is built and turned into
+tokens. The model then generates it token by token: at every step it is
+called with everything generated so far, and only the next target token is
+allowed. The output is therefore always valid JSON with exactly the
+required keys.
 
 ### 4️⃣ Validate — `validator.py`
 
 Checks the keys (`prompt`, `name`, `parameters`), the function name, the
-parameter names and every value's type (`bool` is rejected for numbers). A
-failing prompt is reported and skipped; the others are still saved.
+parameter names and every value's type (`bool` is rejected for numbers).
+All results are then written to the output file.
 
 ---
 
@@ -106,41 +106,45 @@ failing prompt is reported and skipped; the others are still saved.
 |--------|----------------|
 | `__main__.py` | CLI, loads the model once, main loop, writes output |
 | `parser.py` | Reads input JSON into function models |
-| `models.py` | Pydantic `Parameter` / `FunctionDefinition` |
-| `vocabulary.py` | Tokenizer vocabulary and token → id map |
-| `prompt_builder.py` | Selection and argument prompts |
-| `function_selector.py` | Function name scoring |
-| `constrained_decoder.py` | Token masking and value generation |
+| `models.py` | Pydantic `Parameter` / `FunctionDefinition` (`string`, `number`, `boolean`) |
+| `prompt_builder.py` | Function selection prompt |
+| `function_selector.py` | Function name scoring with log-softmax |
+| `argument_exctractor.py` | Regex extraction of typed arguments |
+| `constrained_decoder.py` | Token-by-token generation of the target JSON |
 | `validator.py` | Final schema check |
+| `vocabulary.py` | Vocabulary helpers (not used by the current pipeline) |
 | `llm_sdk/` *(provided)* | `encode`, `decode`, `get_logits_from_input_ids` |
 
 ---
 
 ## 🎨 Design Decisions
 
-- 🤖 **No regex extraction:** new functions and phrasings work without code changes.
-- 🦴 **Code-written skeleton:** keys and punctuation can never be malformed.
+- 🎯 **LLM for the choice, code for the values:** the model picks the function, where it is reliable; regex extracts values, where a 0.6B model often writes words instead of symbols.
+- 🦴 **Code-built target:** keys and punctuation can never be malformed.
 - 🛡️ **Pydantic models:** bad definition files fail early with a clear error.
-- 🧯 **Per-prompt error handling:** one failure doesn't lose the whole batch.
+- 🧯 **Clear errors:** missing files, invalid JSON and schema errors print a message instead of a traceback.
 
 ---
 
 ## 📊 Performance
 
-11 sample prompts on an Apple GPU, ~40–60 s total:
+11 sample prompts on an Apple GPU, ~90 s total:
 
 | Metric | Result |
 |--------|--------|
-| JSON validity | ✅ 100% (guaranteed by masking) |
+| JSON validity | ✅ 100% (guaranteed by constrained decoding) |
 | Function selection | ✅ 11 / 11 |
 | Exact argument values | 🟡 10 / 11 |
 
 Each token costs one full forward pass, since the SDK has no KV cache.
 
-> ⚠️ **Known limitation:** for "Replace all vowels ... with asterisks" the
-> model writes `"asterisk"` instead of `"*"` (its second choice). This is
-> intentionally not hardcoded; a larger model or multi-candidate sampling
-> would fix it.
+> ⚠️ **Known limitations:**
+> - For "Replace all vowels ... with asterisks" the replacement is
+>   `"asterisks"` instead of `"*"`: the extractor takes the word after
+>   "with" and does not translate words into symbols.
+> - The extraction rules depend on phrasing ("in", "with", quotes). A
+>   prompt worded very differently may get wrong values.
+> - An error on one prompt stops the run, so no results are written.
 
 ---
 
@@ -201,10 +205,15 @@ decimal numbers, special characters, and paraphrased prompts.
 Sample `make run` output:
 
 ```
-fn_add_numbers -> -6.25e-05
-fn_greet -> -14.09
-...
+fn_add_numbers → -32.80
+fn_greet → -45.99
+fn_reverse_string → -47.49
+fn_get_square_root → -47.77
+fn_substitute_string_with_regex → -45.68
 Selected function: fn_add_numbers
+
+user: What is the sum of 2 and 3?
+Constrained output: {"prompt": "What is the sum of 2 and 3?", "name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
 ```
 
 ---
@@ -215,7 +224,7 @@ Selected function: fn_add_numbers
 - [Pydantic documentation](https://docs.pydantic.dev/)
 - [RFC 8259 — JSON](https://www.rfc-editor.org/rfc/rfc8259)
 
-**🤖 AI usage:** AI was used to review the subject requirements, find the
-bottleneck in the original vocabulary scan, replace regex argument extraction
-with masked constrained decoding, and help draft this README. All code and the
-decoding design were reviewed and verified locally.
+**🤖 AI usage:** AI was used to review the subject requirements, to try out a
+masked constrained decoder (later replaced by the current regex extraction),
+and to help draft this README. All code and the decoding design were
+reviewed and verified locally.
